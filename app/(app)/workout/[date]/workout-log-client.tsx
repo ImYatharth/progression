@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { Plus, Trash2, ChevronLeft, Clock, Save, MoreVertical, Loader2, Dumbbell } from 'lucide-react'
+import { Plus, Trash2, ChevronLeft, Clock, Save, Loader2, Dumbbell } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -31,6 +31,48 @@ const MUSCLE_GROUP_COLORS: Record<MuscleGroup, string> = {
   Cardio: 'bg-cyan-900/40 text-cyan-300 border-cyan-800',
 }
 
+const NAVBAR_HEIGHT = 56 // px — matches the h-14 navbar
+
+/**
+ * Scroll an element so it sits just below the navbar,
+ * safely above the on-screen keyboard on mobile.
+ */
+function scrollCardIntoView(id: string, delay = 120) {
+  setTimeout(() => {
+    const el = document.getElementById(id)
+    if (!el) return
+    // visualViewport.height shrinks when the keyboard is open
+    const vvHeight = window.visualViewport?.height ?? window.innerHeight
+    const rect = el.getBoundingClientRect()
+    const gap = 12
+    const targetTop = NAVBAR_HEIGHT + gap
+    // Only scroll if the card isn't already comfortably visible
+    if (rect.top >= targetTop && rect.bottom <= vvHeight - gap) return
+    window.scrollTo({
+      top: window.scrollY + rect.top - targetTop,
+      behavior: 'smooth',
+    })
+  }, delay)
+}
+
+/**
+ * Scroll the search dropdown into view above the keyboard.
+ */
+function scrollSearchIntoView(el: HTMLElement | null, delay = 80) {
+  if (!el) return
+  setTimeout(() => {
+    const vvHeight = window.visualViewport?.height ?? window.innerHeight
+    const rect = el.getBoundingClientRect()
+    const gap = 12
+    const targetTop = NAVBAR_HEIGHT + gap
+    if (rect.top >= targetTop && rect.bottom <= vvHeight - gap) return
+    window.scrollTo({
+      top: window.scrollY + rect.top - targetTop,
+      behavior: 'smooth',
+    })
+  }, delay)
+}
+
 interface SetRow {
   id: string
   setNumber: number
@@ -53,7 +95,7 @@ interface WorkoutLogClientProps {
 export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
   const router = useRouter()
   const { toast } = useToast()
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const searchContainerRef = useRef<HTMLDivElement>(null)
 
   const [exercises, setExercises] = useState<Exercise[]>([])
   const [workoutExercises, setWorkoutExercises] = useState<WorkoutExerciseEntry[]>([])
@@ -61,9 +103,11 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(true) // tracks if current state is saved
+  const [saved, setSaved] = useState(true)
   const [loading, setLoading] = useState(true)
   const [addingExerciseId, setAddingExerciseId] = useState<string | null>(null)
+  // ID of the most recently added exercise card — used to trigger scroll
+  const [lastAddedId, setLastAddedId] = useState<string | null>(null)
 
   // Delete workout dialog
   const [showDeleteWorkout, setShowDeleteWorkout] = useState(false)
@@ -86,12 +130,19 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
 
   const workoutExists = workoutExercises.length > 0
 
-  // Mark unsaved whenever exercises/notes change (after initial load)
+  // Mark unsaved on changes (skip initial render)
   const isFirstRender = useRef(true)
   useEffect(() => {
     if (isFirstRender.current) { isFirstRender.current = false; return }
     setSaved(false)
   }, [workoutExercises, notes])
+
+  // Scroll to newly added exercise card
+  useEffect(() => {
+    if (!lastAddedId) return
+    scrollCardIntoView(`exercise-${lastAddedId}`)
+    setLastAddedId(null)
+  }, [lastAddedId, workoutExercises])
 
   useEffect(() => {
     async function load() {
@@ -152,19 +203,26 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
 
   const addedExerciseIds = new Set(workoutExercises.map((we) => we.exercise.id))
 
+  function openSearch() {
+    setShowSearch(true)
+    // Scroll search panel into view after it renders
+    scrollSearchIntoView(searchContainerRef.current, 100)
+  }
+
   async function handleAddExercise(exercise: Exercise) {
     if (addedExerciseIds.has(exercise.id)) return
     setAddingExerciseId(exercise.id)
     const lastSession = await getLastSessionForExercise(exercise.id, date)
+    const newId = crypto.randomUUID()
     setWorkoutExercises((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), exercise, sets: [{ id: crypto.randomUUID(), setNumber: 1, reps: '', weightKg: '', durationSeconds: '' }], lastSession },
+      { id: newId, exercise, sets: [{ id: crypto.randomUUID(), setNumber: 1, reps: '', weightKg: '', durationSeconds: '' }], lastSession },
     ])
     setAddingExerciseId(null)
     setShowSearch(false)
     setSearchQuery('')
-    // scroll to bottom so new card is visible
-    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }), 100)
+    // Trigger scroll to the new card (effect fires after state update)
+    setLastAddedId(newId)
   }
 
   function confirmRemoveExercise(entryId: string) {
@@ -179,11 +237,24 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
 
   function addSet(entryId: string) {
     setWorkoutExercises((prev) =>
-      prev.map((we) =>
-        we.id === entryId
-          ? { ...we, sets: [...we.sets, { id: crypto.randomUUID(), setNumber: we.sets.length + 1, reps: '', weightKg: '', durationSeconds: '' }] }
-          : we
-      )
+      prev.map((we) => {
+        if (we.id !== entryId) return we
+        // Copy reps + weight from the last set so user only edits what changed
+        const lastSet = we.sets[we.sets.length - 1]
+        return {
+          ...we,
+          sets: [
+            ...we.sets,
+            {
+              id: crypto.randomUUID(),
+              setNumber: we.sets.length + 1,
+              reps: lastSet?.reps ?? '',
+              weightKg: lastSet?.weightKg ?? '',
+              durationSeconds: lastSet?.durationSeconds ?? '',
+            },
+          ],
+        }
+      })
     )
   }
 
@@ -274,7 +345,6 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
     )
   }
 
-  // ── Confirm remove exercise modal ──────────────────────────────────────
   const entryToRemove = workoutExercises.find((we) => we.id === confirmRemoveId)
 
   return (
@@ -326,7 +396,7 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
         </div>
       )}
 
-      {/* Exercise cards */}
+      {/* Exercise cards — each gets an id so we can scroll to it */}
       {workoutExercises.map((entry) => (
         <ExerciseCard
           key={entry.id}
@@ -339,9 +409,12 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
         />
       ))}
 
-      {/* Add exercise */}
+      {/* Add exercise search */}
       {showSearch ? (
-        <div className="bg-card border border-border rounded-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
+        <div
+          ref={searchContainerRef}
+          className="bg-card border border-border rounded-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200"
+        >
           <div className="p-3 border-b border-border">
             <Input
               autoFocus
@@ -349,9 +422,11 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="h-9"
+              // Re-scroll whenever keyboard pops up and changes visual viewport
+              onFocus={() => scrollSearchIntoView(searchContainerRef.current, 300)}
             />
           </div>
-          <div className="max-h-72 overflow-y-auto">
+          <div className="max-h-64 overflow-y-auto">
             {Object.entries(groupedExercises).length === 0 && (
               <p className="px-4 py-6 text-sm text-muted-foreground text-center">No exercises match</p>
             )}
@@ -396,14 +471,12 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
         <Button
           variant="outline"
           className="w-full border-dashed transition-colors"
-          onClick={() => setShowSearch(true)}
+          onClick={openSearch}
         >
           <Plus className="h-4 w-4 mr-2" />
           Add exercise
         </Button>
       )}
-
-      <div ref={bottomRef} />
 
       {/* Floating save */}
       <div className="fixed bottom-4 left-0 right-0 px-4 max-w-4xl mx-auto z-30">
@@ -510,7 +583,10 @@ function ExerciseCard({ entry, date, onRemove, onAddSet, onRemoveSet, onUpdateSe
   const router = useRouter()
 
   return (
-    <div className="bg-card border border-border rounded-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
+    <div
+      id={`exercise-${entry.id}`}
+      className="bg-card border border-border rounded-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200"
+    >
       {/* Exercise header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2 min-w-0">
