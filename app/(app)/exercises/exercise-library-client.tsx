@@ -65,7 +65,7 @@ export function ExerciseLibraryClient() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 animate-in fade-in duration-300">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Exercise Library</h1>

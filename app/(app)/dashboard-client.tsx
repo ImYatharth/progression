@@ -64,7 +64,7 @@ export function DashboardClient() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-in fade-in duration-300">
       {/* Stats strip */}
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-card border border-border rounded-xl p-4 flex items-center gap-3">

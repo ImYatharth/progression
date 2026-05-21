@@ -217,6 +217,12 @@ export async function saveWorkout(
   return workout
 }
 
+export async function deleteWorkout(date: string): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.from('workouts').delete().eq('date', date)
+  if (error) throw error
+}
+
 // ── Exercise History ──────────────────────────────────────────────────────
 
 export async function getLastSessionForExercise(
