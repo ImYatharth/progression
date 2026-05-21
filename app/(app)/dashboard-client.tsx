@@ -2,25 +2,18 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameMonth, isToday, parseISO } from 'date-fns'
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameMonth } from 'date-fns'
 import { ChevronLeft, ChevronRight, CalendarDays, Flame, Layers } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { createClient } from '@/lib/supabase'
 import { todayISO } from '@/lib/utils'
 
-interface DashboardClientProps {
-  userId: string
-}
-
-export function DashboardClient({ userId }: DashboardClientProps) {
+export function DashboardClient() {
   const router = useRouter()
   const [currentDate, setCurrentDate] = useState(new Date())
   const [workoutDates, setWorkoutDates] = useState<Set<string>>(new Set())
   const [stats, setStats] = useState({ totalWorkouts: 0, totalSets: 0 })
   const [loading, setLoading] = useState(true)
-
-  const year = currentDate.getFullYear()
-  const month = currentDate.getMonth() + 1
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -31,7 +24,6 @@ export function DashboardClient({ userId }: DashboardClientProps) {
     const { data: workouts } = await supabase
       .from('workouts')
       .select('id, date')
-      .eq('user_id', userId)
       .gte('date', startDate)
       .lte('date', endDate)
 
@@ -59,7 +51,7 @@ export function DashboardClient({ userId }: DashboardClientProps) {
 
     setStats({ totalWorkouts: workouts.length, totalSets })
     setLoading(false)
-  }, [currentDate, userId])
+  }, [currentDate])
 
   useEffect(() => { fetchData() }, [fetchData])
 
@@ -97,7 +89,6 @@ export function DashboardClient({ userId }: DashboardClientProps) {
 
       {/* Calendar */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
-        {/* Calendar header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <Button variant="ghost" size="icon" onClick={() => setCurrentDate((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}>
             <ChevronLeft className="h-4 w-4" />
@@ -108,10 +99,7 @@ export function DashboardClient({ userId }: DashboardClientProps) {
               variant="outline"
               size="sm"
               className="h-7 text-xs"
-              onClick={() => {
-                setCurrentDate(new Date())
-                goToDay(today)
-              }}
+              onClick={() => { setCurrentDate(new Date()); goToDay(today) }}
             >
               <CalendarDays className="h-3 w-3 mr-1" />
               Today
@@ -122,16 +110,12 @@ export function DashboardClient({ userId }: DashboardClientProps) {
           </Button>
         </div>
 
-        {/* Day labels */}
         <div className="grid grid-cols-7 border-b border-border">
           {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
-            <div key={d} className="text-center text-xs text-muted-foreground py-2 font-medium">
-              {d}
-            </div>
+            <div key={d} className="text-center text-xs text-muted-foreground py-2 font-medium">{d}</div>
           ))}
         </div>
 
-        {/* Day cells */}
         <div className="grid grid-cols-7">
           {Array.from({ length: firstDayOfWeek }).map((_, i) => (
             <div key={`empty-${i}`} className="aspect-square" />
@@ -149,13 +133,9 @@ export function DashboardClient({ userId }: DashboardClientProps) {
                   aspect-square flex flex-col items-center justify-center text-sm relative transition-colors
                   hover:bg-secondary/60
                   ${!isSameMonth(day, currentDate) ? 'text-muted-foreground/30' : ''}
-                  ${isCurrentDay ? 'font-bold' : ''}
                 `}
               >
-                <span className={`
-                  h-7 w-7 flex items-center justify-center rounded-full text-sm
-                  ${isCurrentDay ? 'bg-primary text-primary-foreground' : ''}
-                `}>
+                <span className={`h-7 w-7 flex items-center justify-center rounded-full text-sm ${isCurrentDay ? 'bg-primary text-primary-foreground font-bold' : ''}`}>
                   {format(day, 'd')}
                 </span>
                 {hasWorkout && (
