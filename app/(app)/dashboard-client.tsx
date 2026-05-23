@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameMonth } from 'date-fns'
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameMonth, addDays } from 'date-fns'
 import { ChevronLeft, ChevronRight, CalendarDays, Flame, Layers } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { createClient } from '@/lib/supabase'
@@ -120,27 +120,53 @@ export function DashboardClient() {
           {Array.from({ length: firstDayOfWeek }).map((_, i) => (
             <div key={`empty-${i}`} className="aspect-square" />
           ))}
+
           {days.map((day) => {
             const dateStr = format(day, 'yyyy-MM-dd')
             const hasWorkout = workoutDates.has(dateStr)
             const isCurrentDay = dateStr === today
+            const dayOfWeek = getDay(day) // 0 = Sun, 6 = Sat
+
+            // Streak connectors — only within the same grid row
+            const prevDateStr = format(addDays(day, -1), 'yyyy-MM-dd')
+            const nextDateStr = format(addDays(day, 1), 'yyyy-MM-dd')
+            // Don't connect across row breaks (Sun's left / Sat's right)
+            const isLeftConnected = hasWorkout && dayOfWeek !== 0 && workoutDates.has(prevDateStr)
+            const isRightConnected = hasWorkout && dayOfWeek !== 6 && workoutDates.has(nextDateStr)
 
             return (
               <button
                 key={dateStr}
                 onClick={() => goToDay(dateStr)}
                 className={`
-                  aspect-square flex flex-col items-center justify-center text-sm relative transition-colors
-                  hover:bg-secondary/60
-                  ${!isSameMonth(day, currentDate) ? 'text-muted-foreground/30' : ''}
+                  relative aspect-square flex items-center justify-center text-sm transition-colors
+                  hover:bg-secondary/40
+                  ${!isSameMonth(day, currentDate) ? 'opacity-30' : ''}
                 `}
               >
-                <span className={`h-7 w-7 flex items-center justify-center rounded-full text-sm ${isCurrentDay ? 'bg-primary text-primary-foreground font-bold' : ''}`}>
+                {/* Left streak connector */}
+                {isLeftConnected && (
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1/2 h-2 bg-primary/20 pointer-events-none" />
+                )}
+                {/* Right streak connector */}
+                {isRightConnected && (
+                  <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1/2 h-2 bg-primary/20 pointer-events-none" />
+                )}
+
+                {/* Day number circle */}
+                <span
+                  className={`
+                    relative z-10 h-7 w-7 flex items-center justify-center rounded-full text-sm transition-colors
+                    ${isCurrentDay
+                      ? 'bg-primary text-primary-foreground font-bold'
+                      : hasWorkout
+                      ? 'bg-primary/20 text-primary font-semibold'
+                      : 'text-foreground'
+                    }
+                  `}
+                >
                   {format(day, 'd')}
                 </span>
-                {hasWorkout && (
-                  <span className={`h-1.5 w-1.5 rounded-full mt-0.5 ${isCurrentDay ? 'bg-primary-foreground/70' : 'bg-primary'}`} />
-                )}
               </button>
             )
           })}

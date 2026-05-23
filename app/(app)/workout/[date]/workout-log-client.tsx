@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { Plus, Trash2, ChevronLeft, Clock, Save, Loader2, Dumbbell } from 'lucide-react'
+import { Plus, Trash2, ChevronLeft, Clock, Save, Loader2, Dumbbell, Timer } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -31,33 +31,21 @@ const MUSCLE_GROUP_COLORS: Record<MuscleGroup, string> = {
   Cardio: 'bg-cyan-900/40 text-cyan-300 border-cyan-800',
 }
 
-const NAVBAR_HEIGHT = 56 // px — matches the h-14 navbar
+const NAVBAR_HEIGHT = 56
 
-/**
- * Scroll an element so it sits just below the navbar,
- * safely above the on-screen keyboard on mobile.
- */
 function scrollCardIntoView(id: string, delay = 120) {
   setTimeout(() => {
     const el = document.getElementById(id)
     if (!el) return
-    // visualViewport.height shrinks when the keyboard is open
     const vvHeight = window.visualViewport?.height ?? window.innerHeight
     const rect = el.getBoundingClientRect()
     const gap = 12
     const targetTop = NAVBAR_HEIGHT + gap
-    // Only scroll if the card isn't already comfortably visible
     if (rect.top >= targetTop && rect.bottom <= vvHeight - gap) return
-    window.scrollTo({
-      top: window.scrollY + rect.top - targetTop,
-      behavior: 'smooth',
-    })
+    window.scrollTo({ top: window.scrollY + rect.top - targetTop, behavior: 'smooth' })
   }, delay)
 }
 
-/**
- * Scroll the search dropdown into view above the keyboard.
- */
 function scrollSearchIntoView(el: HTMLElement | null, delay = 80) {
   if (!el) return
   setTimeout(() => {
@@ -66,19 +54,20 @@ function scrollSearchIntoView(el: HTMLElement | null, delay = 80) {
     const gap = 12
     const targetTop = NAVBAR_HEIGHT + gap
     if (rect.top >= targetTop && rect.bottom <= vvHeight - gap) return
-    window.scrollTo({
-      top: window.scrollY + rect.top - targetTop,
-      behavior: 'smooth',
-    })
+    window.scrollTo({ top: window.scrollY + rect.top - targetTop, behavior: 'smooth' })
   }, delay)
 }
+
+type ExerciseMode = 'reps' | 'time'
 
 interface SetRow {
   id: string
   setNumber: number
   reps: string
   weightKg: string
-  durationSeconds: string
+  // In 'time' mode this field stores MINUTES (as a display string, e.g. "30").
+  // In 'reps' mode it is always empty / ignored.
+  durationMinutes: string
 }
 
 interface WorkoutExerciseEntry {
@@ -86,6 +75,7 @@ interface WorkoutExerciseEntry {
   exercise: Exercise
   sets: SetRow[]
   lastSession: ExerciseHistorySession | null
+  mode: ExerciseMode
 }
 
 interface WorkoutLogClientProps {
@@ -106,17 +96,12 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
   const [saved, setSaved] = useState(true)
   const [loading, setLoading] = useState(true)
   const [addingExerciseId, setAddingExerciseId] = useState<string | null>(null)
-  // ID of the most recently added exercise card — used to trigger scroll
   const [lastAddedId, setLastAddedId] = useState<string | null>(null)
 
-  // Delete workout dialog
   const [showDeleteWorkout, setShowDeleteWorkout] = useState(false)
   const [deletingWorkout, setDeletingWorkout] = useState(false)
-
-  // Remove exercise confirmation
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
 
-  // Custom exercise modal
   const [showCustomModal, setShowCustomModal] = useState(false)
   const [customName, setCustomName] = useState('')
   const [customMuscleGroup, setCustomMuscleGroup] = useState<MuscleGroup>('Chest')
@@ -130,14 +115,12 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
 
   const workoutExists = workoutExercises.length > 0
 
-  // Mark unsaved on changes (skip initial render)
   const isFirstRender = useRef(true)
   useEffect(() => {
     if (isFirstRender.current) { isFirstRender.current = false; return }
     setSaved(false)
   }, [workoutExercises, notes])
 
-  // Scroll to newly added exercise card
   useEffect(() => {
     if (!lastAddedId) return
     scrollCardIntoView(`exercise-${lastAddedId}`)
@@ -168,17 +151,35 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
         if (wes) {
           const entries: WorkoutExerciseEntry[] = await Promise.all(
             wes.map(async (we) => {
-              const sortedSets = (we.sets || [])
-                .sort((a: { set_number: number }, b: { set_number: number }) => a.set_number - b.set_number)
-                .map((s: { set_number: number; reps: number | null; weight_kg: number | null; duration_seconds: number | null }) => ({
-                  id: crypto.randomUUID(),
-                  setNumber: s.set_number,
-                  reps: s.reps?.toString() ?? '',
-                  weightKg: s.weight_kg?.toString() ?? '',
-                  durationSeconds: s.duration_seconds?.toString() ?? '',
-                }))
+              const rawSets: Array<{
+                set_number: number
+                reps: number | null
+                weight_kg: number | null
+                duration_seconds: number | null
+              }> = (we.sets || []).sort(
+                (a: { set_number: number }, b: { set_number: number }) => a.set_number - b.set_number
+              )
+
+              // Determine mode: if any set has duration_seconds, treat as time mode.
+              // Also default cardio to time mode.
+              const hasTimeSets = rawSets.some((s) => s.duration_seconds != null && s.duration_seconds > 0)
+              const mode: ExerciseMode =
+                we.exercise.muscle_group === 'Cardio' || hasTimeSets ? 'time' : 'reps'
+
+              const sortedSets: SetRow[] = rawSets.map((s) => ({
+                id: crypto.randomUUID(),
+                setNumber: s.set_number,
+                reps: s.reps?.toString() ?? '',
+                weightKg: s.weight_kg?.toString() ?? '',
+                // Convert seconds → minutes for display in time mode
+                durationMinutes:
+                  mode === 'time' && s.duration_seconds != null
+                    ? (s.duration_seconds / 60).toString()
+                    : '',
+              }))
+
               const lastSession = await getLastSessionForExercise(we.exercise.id, date)
-              return { id: crypto.randomUUID(), exercise: we.exercise, sets: sortedSets, lastSession }
+              return { id: crypto.randomUUID(), exercise: we.exercise, sets: sortedSets, lastSession, mode }
             })
           )
           setWorkoutExercises(entries)
@@ -205,7 +206,6 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
 
   function openSearch() {
     setShowSearch(true)
-    // Scroll search panel into view after it renders
     scrollSearchIntoView(searchContainerRef.current, 100)
   }
 
@@ -214,20 +214,30 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
     setAddingExerciseId(exercise.id)
     const lastSession = await getLastSessionForExercise(exercise.id, date)
     const newId = crypto.randomUUID()
+    const mode: ExerciseMode = exercise.muscle_group === 'Cardio' ? 'time' : 'reps'
     setWorkoutExercises((prev) => [
       ...prev,
-      { id: newId, exercise, sets: [{ id: crypto.randomUUID(), setNumber: 1, reps: '', weightKg: '', durationSeconds: '' }], lastSession },
+      {
+        id: newId,
+        exercise,
+        sets: [{ id: crypto.randomUUID(), setNumber: 1, reps: '', weightKg: '', durationMinutes: '' }],
+        lastSession,
+        mode,
+      },
     ])
     setAddingExerciseId(null)
     setShowSearch(false)
     setSearchQuery('')
-    // Trigger scroll to the new card (effect fires after state update)
     setLastAddedId(newId)
   }
 
-  function confirmRemoveExercise(entryId: string) {
-    setConfirmRemoveId(entryId)
+  function toggleMode(entryId: string, mode: ExerciseMode) {
+    setWorkoutExercises((prev) =>
+      prev.map((we) => (we.id === entryId ? { ...we, mode } : we))
+    )
   }
+
+  function confirmRemoveExercise(entryId: string) { setConfirmRemoveId(entryId) }
 
   function doRemoveExercise() {
     if (!confirmRemoveId) return
@@ -239,7 +249,6 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
     setWorkoutExercises((prev) =>
       prev.map((we) => {
         if (we.id !== entryId) return we
-        // Copy reps + weight from the last set so user only edits what changed
         const lastSet = we.sets[we.sets.length - 1]
         return {
           ...we,
@@ -248,9 +257,10 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
             {
               id: crypto.randomUUID(),
               setNumber: we.sets.length + 1,
+              // Copy values from the previous set
               reps: lastSet?.reps ?? '',
               weightKg: lastSet?.weightKg ?? '',
-              durationSeconds: lastSet?.durationSeconds ?? '',
+              durationMinutes: lastSet?.durationMinutes ?? '',
             },
           ],
         }
@@ -302,9 +312,12 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
           orderIndex: i,
           sets: we.sets.map((s) => ({
             setNumber: s.setNumber,
-            reps: s.reps ? parseInt(s.reps) : null,
-            weightKg: s.weightKg ? parseFloat(s.weightKg) : null,
-            durationSeconds: s.durationSeconds ? parseInt(s.durationSeconds) : null,
+            // Time mode: save duration in seconds, null out reps/weight
+            reps: we.mode === 'reps' ? (s.reps ? parseInt(s.reps) : null) : null,
+            weightKg: we.mode === 'reps' ? (s.weightKg ? parseFloat(s.weightKg) : null) : null,
+            // Convert minutes → seconds on save
+            durationSeconds:
+              we.mode === 'time' ? (s.durationMinutes ? Math.round(parseFloat(s.durationMinutes) * 60) : null) : null,
           })),
         }))
       )
@@ -329,7 +342,6 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
     }
   }
 
-  // ── Loading skeleton ───────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="space-y-4 animate-in fade-in duration-300">
@@ -396,16 +408,16 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
         </div>
       )}
 
-      {/* Exercise cards — each gets an id so we can scroll to it */}
+      {/* Exercise cards */}
       {workoutExercises.map((entry) => (
         <ExerciseCard
           key={entry.id}
           entry={entry}
-          date={date}
           onRemove={() => confirmRemoveExercise(entry.id)}
           onAddSet={() => addSet(entry.id)}
           onRemoveSet={(setId) => removeSet(entry.id, setId)}
           onUpdateSet={(setId, field, value) => updateSet(entry.id, setId, field, value)}
+          onToggleMode={(mode) => toggleMode(entry.id, mode)}
         />
       ))}
 
@@ -422,7 +434,6 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="h-9"
-              // Re-scroll whenever keyboard pops up and changes visual viewport
               onFocus={() => scrollSearchIntoView(searchContainerRef.current, 300)}
             />
           </div>
@@ -468,11 +479,7 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
           </div>
         </div>
       ) : (
-        <Button
-          variant="outline"
-          className="w-full border-dashed transition-colors"
-          onClick={openSearch}
-        >
+        <Button variant="outline" className="w-full border-dashed transition-colors" onClick={openSearch}>
           <Plus className="h-4 w-4 mr-2" />
           Add exercise
         </Button>
@@ -494,13 +501,13 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
         </Button>
       </div>
 
-      {/* ── Confirm remove exercise ── */}
+      {/* Confirm remove exercise */}
       <Dialog open={!!confirmRemoveId} onOpenChange={(o) => { if (!o) setConfirmRemoveId(null) }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Remove exercise?</DialogTitle>
             <DialogDescription>
-              This will remove <strong>{entryToRemove?.exercise.name}</strong> and all its sets from today's workout. The exercise history won't be affected.
+              This will remove <strong>{entryToRemove?.exercise.name}</strong> and all its sets from today's workout.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -510,19 +517,17 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
         </DialogContent>
       </Dialog>
 
-      {/* ── Confirm delete workout ── */}
+      {/* Confirm delete workout */}
       <Dialog open={showDeleteWorkout} onOpenChange={setShowDeleteWorkout}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Delete workout?</DialogTitle>
             <DialogDescription>
-              This will permanently delete the entire workout for <strong>{formattedDate}</strong>, including all exercises and sets. This cannot be undone.
+              Permanently delete the entire workout for <strong>{formattedDate}</strong>? This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteWorkout(false)} disabled={deletingWorkout}>
-              Cancel
-            </Button>
+            <Button variant="outline" onClick={() => setShowDeleteWorkout(false)} disabled={deletingWorkout}>Cancel</Button>
             <Button variant="destructive" onClick={handleDeleteWorkout} disabled={deletingWorkout}>
               {deletingWorkout ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Deleting…</> : 'Delete workout'}
             </Button>
@@ -530,7 +535,7 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
         </DialogContent>
       </Dialog>
 
-      {/* ── Custom exercise modal ── */}
+      {/* Custom exercise modal */}
       <Dialog open={showCustomModal} onOpenChange={(o) => { setShowCustomModal(o); if (!o) setCustomName('') }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -571,25 +576,27 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
 
 interface ExerciseCardProps {
   entry: WorkoutExerciseEntry
-  date: string
   onRemove: () => void
   onAddSet: () => void
   onRemoveSet: (setId: string) => void
   onUpdateSet: (setId: string, field: keyof SetRow, value: string) => void
+  onToggleMode: (mode: ExerciseMode) => void
 }
 
-function ExerciseCard({ entry, date, onRemove, onAddSet, onRemoveSet, onUpdateSet }: ExerciseCardProps) {
+function ExerciseCard({ entry, onRemove, onAddSet, onRemoveSet, onUpdateSet, onToggleMode }: ExerciseCardProps) {
   const [showHistory, setShowHistory] = useState(false)
   const router = useRouter()
+  const { mode } = entry
 
   return (
     <div
       id={`exercise-${entry.id}`}
       className="bg-card border border-border rounded-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200"
     >
-      {/* Exercise header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <div className="flex items-center gap-2 min-w-0">
+      {/* Header row */}
+      <div className="flex items-center justify-between px-3 py-3 border-b border-border gap-2">
+        {/* Name + tag */}
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
             onClick={() => router.push(`/exercise/${entry.exercise.id}`)}
             className="font-semibold text-sm truncate hover:text-primary transition-colors"
@@ -600,7 +607,31 @@ function ExerciseCard({ entry, date, onRemove, onAddSet, onRemoveSet, onUpdateSe
             {entry.exercise.muscle_group}
           </span>
         </div>
-        <div className="flex items-center gap-1 ml-2 shrink-0">
+
+        {/* Reps / Time toggle */}
+        <div className="flex items-center rounded-md border border-border overflow-hidden shrink-0 text-xs">
+          <button
+            onClick={() => onToggleMode('reps')}
+            className={`flex items-center gap-1 px-2.5 py-1.5 transition-colors ${
+              mode === 'reps' ? 'bg-primary/20 text-primary font-semibold' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Reps
+          </button>
+          <div className="w-px h-4 bg-border" />
+          <button
+            onClick={() => onToggleMode('time')}
+            className={`flex items-center gap-1 px-2.5 py-1.5 transition-colors ${
+              mode === 'time' ? 'bg-primary/20 text-primary font-semibold' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Timer className="h-3 w-3" />
+            Time
+          </button>
+        </div>
+
+        {/* Action icons */}
+        <div className="flex items-center gap-0.5 shrink-0">
           {entry.lastSession && (
             <Button
               variant="ghost"
@@ -636,16 +667,30 @@ function ExerciseCard({ entry, date, onRemove, onAddSet, onRemoveSet, onUpdateSe
             <thead>
               <tr className="text-muted-foreground">
                 <th className="text-left font-medium w-8 pb-1">Set</th>
-                <th className="text-left font-medium pb-1">Reps</th>
-                <th className="text-left font-medium pb-1">Weight</th>
+                {mode === 'time' ? (
+                  <th className="text-left font-medium pb-1">Duration</th>
+                ) : (
+                  <>
+                    <th className="text-left font-medium pb-1">Reps</th>
+                    <th className="text-left font-medium pb-1">Weight</th>
+                  </>
+                )}
               </tr>
             </thead>
             <tbody>
               {entry.lastSession.sets.map((s) => (
                 <tr key={s.id}>
                   <td className="py-0.5 text-muted-foreground">{s.set_number}</td>
-                  <td className="py-0.5">{s.reps ?? '—'}</td>
-                  <td className="py-0.5">{s.weight_kg != null ? `${s.weight_kg} kg` : '—'}</td>
+                  {mode === 'time' ? (
+                    <td className="py-0.5">
+                      {s.duration_seconds != null ? `${(s.duration_seconds / 60).toFixed(1)} min` : '—'}
+                    </td>
+                  ) : (
+                    <>
+                      <td className="py-0.5">{s.reps ?? '—'}</td>
+                      <td className="py-0.5">{s.weight_kg != null ? `${s.weight_kg} kg` : '—'}</td>
+                    </>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -653,48 +698,58 @@ function ExerciseCard({ entry, date, onRemove, onAddSet, onRemoveSet, onUpdateSe
         </div>
       )}
 
-      {/* Sets */}
+      {/* Set rows */}
       <div className="px-4 py-2 space-y-2">
-        <div className="grid grid-cols-[32px_1fr_1fr_36px] gap-2 text-xs text-muted-foreground pt-1">
-          <span>Set</span>
-          <span>Reps</span>
-          <span>kg</span>
-          <span />
-        </div>
-
-        {entry.sets.map((set) => (
-          <div key={set.id} className="grid grid-cols-[32px_1fr_1fr_36px] gap-2 items-center animate-in fade-in duration-150">
-            <span className="text-sm text-muted-foreground font-mono text-center leading-[44px]">{set.setNumber}</span>
-            <Input
-              type="number"
-              inputMode="numeric"
-              placeholder="—"
-              value={set.reps}
-              onChange={(e) => onUpdateSet(set.id, 'reps', e.target.value)}
-              className="h-11 text-center text-base"
-            />
-            <Input
-              type="number"
-              inputMode="decimal"
-              placeholder="—"
-              value={set.weightKg}
-              onChange={(e) => onUpdateSet(set.id, 'weightKg', e.target.value)}
-              className="h-11 text-center text-base"
-            />
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9 text-muted-foreground hover:text-destructive transition-colors"
-              onClick={() => onRemoveSet(set.id)}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        ))}
+        {mode === 'reps' ? (
+          <>
+            <div className="grid grid-cols-[32px_1fr_1fr_36px] gap-2 text-xs text-muted-foreground pt-1">
+              <span>Set</span><span>Reps</span><span>kg</span><span />
+            </div>
+            {entry.sets.map((set) => (
+              <div key={set.id} className="grid grid-cols-[32px_1fr_1fr_36px] gap-2 items-center animate-in fade-in duration-150">
+                <span className="text-sm text-muted-foreground font-mono text-center leading-[44px]">{set.setNumber}</span>
+                <Input
+                  type="number" inputMode="numeric" placeholder="—"
+                  value={set.reps}
+                  onChange={(e) => onUpdateSet(set.id, 'reps', e.target.value)}
+                  className="h-11 text-center text-base"
+                />
+                <Input
+                  type="number" inputMode="decimal" placeholder="—"
+                  value={set.weightKg}
+                  onChange={(e) => onUpdateSet(set.id, 'weightKg', e.target.value)}
+                  className="h-11 text-center text-base"
+                />
+                <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-destructive transition-colors" onClick={() => onRemoveSet(set.id)}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ))}
+          </>
+        ) : (
+          <>
+            <div className="grid grid-cols-[32px_1fr_36px] gap-2 text-xs text-muted-foreground pt-1">
+              <span>Set</span><span>Duration (min)</span><span />
+            </div>
+            {entry.sets.map((set) => (
+              <div key={set.id} className="grid grid-cols-[32px_1fr_36px] gap-2 items-center animate-in fade-in duration-150">
+                <span className="text-sm text-muted-foreground font-mono text-center leading-[44px]">{set.setNumber}</span>
+                <Input
+                  type="number" inputMode="decimal" placeholder="e.g. 30"
+                  value={set.durationMinutes}
+                  onChange={(e) => onUpdateSet(set.id, 'durationMinutes', e.target.value)}
+                  className="h-11 text-center text-base"
+                />
+                <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-destructive transition-colors" onClick={() => onRemoveSet(set.id)}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ))}
+          </>
+        )}
 
         <Button
-          variant="ghost"
-          size="sm"
+          variant="ghost" size="sm"
           className="w-full text-xs h-8 text-muted-foreground hover:text-foreground transition-colors"
           onClick={onAddSet}
         >
