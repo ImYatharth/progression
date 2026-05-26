@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { Plus, Trash2, ChevronLeft, Clock, Save, Loader2, Dumbbell, Timer } from 'lucide-react'
@@ -58,6 +58,23 @@ function scrollSearchIntoView(el: HTMLElement | null, delay = 80) {
   }, delay)
 }
 
+// Move focus to the next number input inside the same exercise card, or
+// blur if we're at the last input. Lets the user chain through reps → kg
+// → next-set's reps without ever dismissing the keyboard.
+function focusNextInput(currentInput: HTMLInputElement) {
+  const card = currentInput.closest('[data-exercise-card]')
+  if (!card) return
+  const inputs = Array.from(
+    card.querySelectorAll<HTMLInputElement>('input[data-set-input]')
+  )
+  const idx = inputs.indexOf(currentInput)
+  if (idx >= 0 && idx < inputs.length - 1) {
+    inputs[idx + 1].focus()
+  } else {
+    currentInput.blur()
+  }
+}
+
 type ExerciseMode = 'reps' | 'time'
 
 interface SetRow {
@@ -97,6 +114,8 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
   const [loading, setLoading] = useState(true)
   const [addingExerciseId, setAddingExerciseId] = useState<string | null>(null)
   const [lastAddedId, setLastAddedId] = useState<string | null>(null)
+  const [focusSetId, setFocusSetId] = useState<string | null>(null)
+  const [keyboardOpen, setKeyboardOpen] = useState(false)
 
   const [showDeleteWorkout, setShowDeleteWorkout] = useState(false)
   const [deletingWorkout, setDeletingWorkout] = useState(false)
@@ -126,6 +145,21 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
     scrollCardIntoView(`exercise-${lastAddedId}`)
     setLastAddedId(null)
   }, [lastAddedId, workoutExercises])
+
+  // Detect on-screen keyboard via visualViewport so we can hide the
+  // floating Save button (otherwise it gets covered by the keyboard
+  // and feels janky on iOS).
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    const onResize = () => {
+      const diff = window.innerHeight - vv.height
+      setKeyboardOpen(diff > 150)
+    }
+    vv.addEventListener('resize', onResize)
+    onResize()
+    return () => vv.removeEventListener('resize', onResize)
+  }, [])
 
   useEffect(() => {
     async function load() {
@@ -246,6 +280,7 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
   }
 
   function addSet(entryId: string) {
+    const newSetId = crypto.randomUUID()
     setWorkoutExercises((prev) =>
       prev.map((we) => {
         if (we.id !== entryId) return we
@@ -255,7 +290,7 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
           sets: [
             ...we.sets,
             {
-              id: crypto.randomUUID(),
+              id: newSetId,
               setNumber: we.sets.length + 1,
               // Copy values from the previous set
               reps: lastSet?.reps ?? '',
@@ -266,6 +301,9 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
         }
       })
     )
+    // Trigger auto-focus on the new set's first input so the user can
+    // start typing immediately without a tap.
+    setFocusSetId(newSetId)
   }
 
   function removeSet(entryId: string, setId: string) {
@@ -413,6 +451,8 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
         <ExerciseCard
           key={entry.id}
           entry={entry}
+          focusSetId={focusSetId}
+          onFocusConsumed={() => setFocusSetId(null)}
           onRemove={() => confirmRemoveExercise(entry.id)}
           onAddSet={() => addSet(entry.id)}
           onRemoveSet={(setId) => removeSet(entry.id, setId)}
@@ -485,8 +525,13 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
         </Button>
       )}
 
-      {/* Floating save */}
-      <div className="fixed bottom-4 left-0 right-0 px-4 max-w-4xl mx-auto z-30">
+      {/* Floating save — slides out of the way when the keyboard is open
+          so it doesn't fight with the visual viewport on iOS. */}
+      <div
+        className={`fixed bottom-4 left-0 right-0 px-4 max-w-4xl mx-auto z-30 transition-all duration-200 ${
+          keyboardOpen ? 'translate-y-24 opacity-0 pointer-events-none' : 'translate-y-0 opacity-100'
+        }`}
+      >
         <Button
           className={`w-full h-12 text-base font-semibold shadow-2xl transition-all duration-200 ${saved ? 'opacity-60' : 'opacity-100'}`}
           onClick={handleSave}
@@ -576,6 +621,8 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
 
 interface ExerciseCardProps {
   entry: WorkoutExerciseEntry
+  focusSetId: string | null
+  onFocusConsumed: () => void
   onRemove: () => void
   onAddSet: () => void
   onRemoveSet: (setId: string) => void
@@ -583,13 +630,56 @@ interface ExerciseCardProps {
   onToggleMode: (mode: ExerciseMode) => void
 }
 
-function ExerciseCard({ entry, onRemove, onAddSet, onRemoveSet, onUpdateSet, onToggleMode }: ExerciseCardProps) {
+function ExerciseCard({
+  entry,
+  focusSetId,
+  onFocusConsumed,
+  onRemove,
+  onAddSet,
+  onRemoveSet,
+  onUpdateSet,
+  onToggleMode,
+}: ExerciseCardProps) {
   const [showHistory, setShowHistory] = useState(false)
   const router = useRouter()
   const { mode } = entry
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  // When a newly-added set asks for focus, find its first input and
+  // focus it. select() so typing replaces the copied-from-previous value.
+  useEffect(() => {
+    if (!focusSetId) return
+    if (!entry.sets.some((s) => s.id === focusSetId)) return
+    const input = cardRef.current?.querySelector<HTMLInputElement>(
+      `input[data-set-id="${focusSetId}"]`
+    )
+    if (input) {
+      // Slight delay lets the new row finish mounting + animating
+      setTimeout(() => {
+        input.focus()
+        input.select()
+      }, 60)
+    }
+    onFocusConsumed()
+  }, [focusSetId, entry.sets, onFocusConsumed])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      focusNextInput(e.currentTarget)
+    }
+  }, [])
+
+  const handleFocusSelect = useCallback((e: React.FocusEvent<HTMLInputElement>) => {
+    // select-all on focus → tapping into a copied-value field lets the
+    // user immediately overwrite without backspacing.
+    e.currentTarget.select()
+  }, [])
 
   return (
     <div
+      ref={cardRef}
+      data-exercise-card
       id={`exercise-${entry.id}`}
       className="bg-card border border-border rounded-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200"
     >
@@ -706,46 +796,82 @@ function ExerciseCard({ entry, onRemove, onAddSet, onRemoveSet, onUpdateSet, onT
             <div className="grid grid-cols-[32px_1fr_1fr_36px] gap-2 text-xs text-muted-foreground pt-1">
               <span>Set</span><span>Reps</span><span>kg</span><span />
             </div>
-            {entry.sets.map((set) => (
-              <div key={set.id} className="grid grid-cols-[32px_1fr_1fr_36px] gap-2 items-center animate-in fade-in duration-150">
-                <span className="text-sm text-muted-foreground font-mono text-center leading-[44px]">{set.setNumber}</span>
-                <Input
-                  type="number" inputMode="numeric" placeholder="—"
-                  value={set.reps}
-                  onChange={(e) => onUpdateSet(set.id, 'reps', e.target.value)}
-                  className="h-11 text-center text-base"
-                />
-                <Input
-                  type="number" inputMode="decimal" placeholder="—"
-                  value={set.weightKg}
-                  onChange={(e) => onUpdateSet(set.id, 'weightKg', e.target.value)}
-                  className="h-11 text-center text-base"
-                />
-                <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-destructive transition-colors" onClick={() => onRemoveSet(set.id)}>
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            ))}
+            {entry.sets.map((set, idx) => {
+              const isLastSet = idx === entry.sets.length - 1
+              return (
+                <div key={set.id} className="grid grid-cols-[32px_1fr_1fr_36px] gap-2 items-center animate-in fade-in duration-150">
+                  <span className="text-sm text-muted-foreground font-mono text-center leading-[44px]">{set.setNumber}</span>
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="—"
+                    data-set-input
+                    data-set-id={set.id}
+                    value={set.reps}
+                    onChange={(e) => onUpdateSet(set.id, 'reps', e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onFocus={handleFocusSelect}
+                    enterKeyHint="next"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="h-11 text-center text-base"
+                  />
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="—"
+                    data-set-input
+                    value={set.weightKg}
+                    onChange={(e) => onUpdateSet(set.id, 'weightKg', e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onFocus={handleFocusSelect}
+                    enterKeyHint={isLastSet ? 'done' : 'next'}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="h-11 text-center text-base"
+                  />
+                  <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-destructive transition-colors" onClick={() => onRemoveSet(set.id)}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )
+            })}
           </>
         ) : (
           <>
             <div className="grid grid-cols-[32px_1fr_36px] gap-2 text-xs text-muted-foreground pt-1">
               <span>Set</span><span>Duration (min)</span><span />
             </div>
-            {entry.sets.map((set) => (
-              <div key={set.id} className="grid grid-cols-[32px_1fr_36px] gap-2 items-center animate-in fade-in duration-150">
-                <span className="text-sm text-muted-foreground font-mono text-center leading-[44px]">{set.setNumber}</span>
-                <Input
-                  type="number" inputMode="decimal" placeholder="e.g. 30"
-                  value={set.durationMinutes}
-                  onChange={(e) => onUpdateSet(set.id, 'durationMinutes', e.target.value)}
-                  className="h-11 text-center text-base"
-                />
-                <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-destructive transition-colors" onClick={() => onRemoveSet(set.id)}>
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            ))}
+            {entry.sets.map((set, idx) => {
+              const isLastSet = idx === entry.sets.length - 1
+              return (
+                <div key={set.id} className="grid grid-cols-[32px_1fr_36px] gap-2 items-center animate-in fade-in duration-150">
+                  <span className="text-sm text-muted-foreground font-mono text-center leading-[44px]">{set.setNumber}</span>
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="e.g. 30"
+                    data-set-input
+                    data-set-id={set.id}
+                    value={set.durationMinutes}
+                    onChange={(e) => onUpdateSet(set.id, 'durationMinutes', e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onFocus={handleFocusSelect}
+                    enterKeyHint={isLastSet ? 'done' : 'next'}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="h-11 text-center text-base"
+                  />
+                  <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-destructive transition-colors" onClick={() => onRemoveSet(set.id)}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )
+            })}
           </>
         )}
 
