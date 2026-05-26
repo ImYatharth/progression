@@ -593,64 +593,65 @@ function ExerciseCard({ entry, onRemove, onAddSet, onRemoveSet, onUpdateSet, onT
       id={`exercise-${entry.id}`}
       className="bg-card border border-border rounded-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200"
     >
-      {/* Header row */}
-      <div className="flex items-center justify-between px-3 py-3 border-b border-border gap-2">
-        {/* Name + tag */}
-        <div className="flex items-center gap-2 min-w-0 flex-1">
+      {/* Header — two rows so the exercise name has full width */}
+      <div className="px-3 pt-3 pb-2 border-b border-border space-y-2">
+        {/* Row 1: name + action icons */}
+        <div className="flex items-start justify-between gap-2">
           <button
             onClick={() => router.push(`/exercise/${entry.exercise.id}`)}
-            className="font-semibold text-sm truncate hover:text-primary transition-colors"
+            className="font-semibold text-sm text-left hover:text-primary transition-colors min-w-0 flex-1 leading-tight pt-1.5"
           >
             {entry.exercise.name}
           </button>
-          <span className={`text-xs px-2 py-0.5 rounded-full border shrink-0 ${MUSCLE_GROUP_COLORS[entry.exercise.muscle_group as MuscleGroup]}`}>
-            {entry.exercise.muscle_group}
-          </span>
-        </div>
-
-        {/* Reps / Time toggle */}
-        <div className="flex items-center rounded-md border border-border overflow-hidden shrink-0 text-xs">
-          <button
-            onClick={() => onToggleMode('reps')}
-            className={`flex items-center gap-1 px-2.5 py-1.5 transition-colors ${
-              mode === 'reps' ? 'bg-primary/20 text-primary font-semibold' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Reps
-          </button>
-          <div className="w-px h-4 bg-border" />
-          <button
-            onClick={() => onToggleMode('time')}
-            className={`flex items-center gap-1 px-2.5 py-1.5 transition-colors ${
-              mode === 'time' ? 'bg-primary/20 text-primary font-semibold' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Timer className="h-3 w-3" />
-            Time
-          </button>
-        </div>
-
-        {/* Action icons */}
-        <div className="flex items-center gap-0.5 shrink-0">
-          {entry.lastSession && (
+          <div className="flex items-center gap-0.5 shrink-0">
+            {entry.lastSession && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className={`h-8 w-8 transition-colors ${showHistory ? 'text-primary' : 'text-muted-foreground'}`}
+                onClick={() => setShowHistory((v) => !v)}
+                title="Show last session"
+              >
+                <Clock className="h-3.5 w-3.5" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"
-              className={`h-8 w-8 transition-colors ${showHistory ? 'text-primary' : 'text-muted-foreground'}`}
-              onClick={() => setShowHistory((v) => !v)}
-              title="Show last session"
+              className="h-8 w-8 text-muted-foreground hover:text-destructive transition-colors"
+              onClick={onRemove}
             >
-              <Clock className="h-3.5 w-3.5" />
+              <Trash2 className="h-3.5 w-3.5" />
             </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-muted-foreground hover:text-destructive transition-colors"
-            onClick={onRemove}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+          </div>
+        </div>
+
+        {/* Row 2: muscle group badge + Reps/Time toggle */}
+        <div className="flex items-center justify-between gap-2">
+          <span className={`text-xs px-2 py-0.5 rounded-full border shrink-0 ${MUSCLE_GROUP_COLORS[entry.exercise.muscle_group as MuscleGroup]}`}>
+            {entry.exercise.muscle_group}
+          </span>
+
+          <div className="flex items-center rounded-md border border-border overflow-hidden shrink-0 text-xs">
+            <button
+              onClick={() => onToggleMode('reps')}
+              className={`flex items-center gap-1 px-2.5 py-1.5 transition-colors ${
+                mode === 'reps' ? 'bg-primary/20 text-primary font-semibold' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Reps
+            </button>
+            <div className="w-px h-4 bg-border" />
+            <button
+              onClick={() => onToggleMode('time')}
+              className={`flex items-center gap-1 px-2.5 py-1.5 transition-colors ${
+                mode === 'time' ? 'bg-primary/20 text-primary font-semibold' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Timer className="h-3 w-3" />
+              Time
+            </button>
+          </div>
         </div>
       </div>
 
