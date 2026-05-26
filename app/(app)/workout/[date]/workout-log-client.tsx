@@ -435,33 +435,8 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
         />
       </div>
 
-      {/* Empty state */}
-      {workoutExercises.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
-          <div className="h-14 w-14 rounded-2xl bg-secondary flex items-center justify-center mb-3">
-            <Dumbbell className="h-7 w-7 text-muted-foreground" />
-          </div>
-          <p className="font-medium text-sm">No exercises yet</p>
-          <p className="text-xs text-muted-foreground mt-1">Tap "Add exercise" to get started</p>
-        </div>
-      )}
-
-      {/* Exercise cards */}
-      {workoutExercises.map((entry) => (
-        <ExerciseCard
-          key={entry.id}
-          entry={entry}
-          focusSetId={focusSetId}
-          onFocusConsumed={() => setFocusSetId(null)}
-          onRemove={() => confirmRemoveExercise(entry.id)}
-          onAddSet={() => addSet(entry.id)}
-          onRemoveSet={(setId) => removeSet(entry.id, setId)}
-          onUpdateSet={(setId, field, value) => updateSet(entry.id, setId, field, value)}
-          onToggleMode={(mode) => toggleMode(entry.id, mode)}
-        />
-      ))}
-
-      {/* Add exercise search */}
+      {/* Add exercise — top placement so it's reachable without scrolling
+          past every logged exercise */}
       {showSearch ? (
         <div
           ref={searchContainerRef}
@@ -524,6 +499,32 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
           Add exercise
         </Button>
       )}
+
+      {/* Empty state */}
+      {workoutExercises.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
+          <div className="h-14 w-14 rounded-2xl bg-secondary flex items-center justify-center mb-3">
+            <Dumbbell className="h-7 w-7 text-muted-foreground" />
+          </div>
+          <p className="font-medium text-sm">No exercises yet</p>
+          <p className="text-xs text-muted-foreground mt-1">Tap "Add exercise" to get started</p>
+        </div>
+      )}
+
+      {/* Exercise cards */}
+      {workoutExercises.map((entry) => (
+        <ExerciseCard
+          key={entry.id}
+          entry={entry}
+          focusSetId={focusSetId}
+          onFocusConsumed={() => setFocusSetId(null)}
+          onRemove={() => confirmRemoveExercise(entry.id)}
+          onAddSet={() => addSet(entry.id)}
+          onRemoveSet={(setId) => removeSet(entry.id, setId)}
+          onUpdateSet={(setId, field, value) => updateSet(entry.id, setId, field, value)}
+          onToggleMode={(mode) => toggleMode(entry.id, mode)}
+        />
+      ))}
 
       {/* Floating save — slides out of the way when the keyboard is open
           so it doesn't fight with the visual viewport on iOS. */}
