@@ -73,7 +73,7 @@ export function DashboardClient() {
           </div>
           <div>
             <p className="text-2xl font-bold">{loading ? '—' : stats.totalWorkouts}</p>
-            <p className="text-xs text-muted-foreground">Sessions this month</p>
+            <p className="text-[11px] text-muted-foreground whitespace-nowrap">Sessions this month</p>
           </div>
         </div>
         <div className="bg-card border border-border rounded-xl p-4 flex items-center gap-3">
@@ -82,7 +82,7 @@ export function DashboardClient() {
           </div>
           <div>
             <p className="text-2xl font-bold">{loading ? '—' : stats.totalSets}</p>
-            <p className="text-xs text-muted-foreground">Sets this month</p>
+            <p className="text-[11px] text-muted-foreground whitespace-nowrap">Sets this month</p>
           </div>
         </div>
       </div>
