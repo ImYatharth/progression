@@ -73,7 +73,7 @@ export function DashboardClient() {
           </div>
           <div>
             <p className="text-2xl font-bold">{loading ? '—' : stats.totalWorkouts}</p>
-            <p className="text-xs text-muted-foreground">Workouts this month</p>
+            <p className="text-xs text-muted-foreground">Sessions this month</p>
           </div>
         </div>
         <div className="bg-card border border-border rounded-xl p-4 flex items-center gap-3">
