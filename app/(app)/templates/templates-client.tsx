@@ -305,7 +305,7 @@ export function TemplatesClient() {
                     {te.exercise.muscle_group}
                   </span>
                 </div>
-                <span className="text-xs text-muted-foreground shrink-0 ml-2">{te.default_sets} sets</span>
+                <span className="text-xs text-muted-foreground shrink-0 ml-2">{te.default_sets} set{te.default_sets !== 1 ? 's' : ''}</span>
               </div>
             ))}
           </div>

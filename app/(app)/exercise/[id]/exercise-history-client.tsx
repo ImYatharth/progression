@@ -206,7 +206,7 @@ export function ExerciseHistoryClient({ exerciseId }: ExerciseHistoryClientProps
                               {s.weight_kg != null
                                 ? `${s.weight_kg} kg`
                                 : s.duration_seconds != null
-                                ? `${s.duration_seconds}s`
+                                ? `${+(s.duration_seconds / 60).toFixed(1)} min`
                                 : '—'}
                             </td>
                           </tr>
