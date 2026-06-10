@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { Plus, Trash2, ChevronLeft, Clock, Save, Loader2, Dumbbell, Timer } from 'lucide-react'
+import { Plus, Trash2, ChevronLeft, Clock, Save, Loader2, Dumbbell, Timer, ClipboardList, BookmarkPlus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -16,8 +16,8 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/components/ui/use-toast'
 import { createClient } from '@/lib/supabase'
-import { getExercises, createCustomExercise, getLastSessionForExercise, saveWorkout, deleteWorkout } from '@/lib/db'
-import type { Exercise, MuscleGroup, ExerciseHistorySession } from '@/types'
+import { getExercises, createCustomExercise, getLastSessionForExercise, saveWorkout, deleteWorkout, getTemplates, createTemplate } from '@/lib/db'
+import type { Exercise, MuscleGroup, ExerciseHistorySession, TemplateWithExercises } from '@/types'
 
 const MUSCLE_GROUPS: MuscleGroup[] = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio']
 
@@ -124,6 +124,14 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
   const [showCustomModal, setShowCustomModal] = useState(false)
   const [customName, setCustomName] = useState('')
   const [customMuscleGroup, setCustomMuscleGroup] = useState<MuscleGroup>('Chest')
+
+  // Templates
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false)
+  const [templates, setTemplates] = useState<TemplateWithExercises[] | null>(null)
+  const [applyingTemplateId, setApplyingTemplateId] = useState<string | null>(null)
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false)
+  const [templateName, setTemplateName] = useState('')
+  const [savingTemplate, setSavingTemplate] = useState(false)
 
   const formattedDate = (() => {
     try {
@@ -263,6 +271,75 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
     setShowSearch(false)
     setSearchQuery('')
     setLastAddedId(newId)
+  }
+
+  async function openTemplatePicker() {
+    setShowTemplatePicker(true)
+    if (templates === null) {
+      try {
+        setTemplates(await getTemplates())
+      } catch {
+        setTemplates([])
+        toast({
+          title: 'Could not load templates',
+          description: 'Make sure the templates tables exist in Supabase (run supabase/templates.sql).',
+          variant: 'destructive',
+        })
+      }
+    }
+  }
+
+  async function handleApplyTemplate(template: TemplateWithExercises) {
+    setApplyingTemplateId(template.id)
+    // Merge: skip exercises already in today's workout so applying twice
+    // (or stacking two templates) never duplicates anything.
+    const toAdd = template.template_exercises.filter((te) => !addedExerciseIds.has(te.exercise.id))
+    const entries: WorkoutExerciseEntry[] = await Promise.all(
+      toAdd.map(async (te) => {
+        const lastSession = await getLastSessionForExercise(te.exercise.id, date)
+        const mode: ExerciseMode = te.exercise.muscle_group === 'Cardio' ? 'time' : 'reps'
+        return {
+          id: crypto.randomUUID(),
+          exercise: te.exercise,
+          sets: Array.from({ length: te.default_sets }, (_, i) => ({
+            id: crypto.randomUUID(),
+            setNumber: i + 1,
+            reps: '',
+            weightKg: '',
+            durationMinutes: '',
+          })),
+          lastSession,
+          mode,
+        }
+      })
+    )
+    setWorkoutExercises((prev) => [...prev, ...entries])
+    setApplyingTemplateId(null)
+    setShowTemplatePicker(false)
+    if (entries.length > 0) {
+      setLastAddedId(entries[0].id)
+      toast({ title: `✓ ${template.name} added`, description: `${entries.length} exercise${entries.length !== 1 ? 's' : ''}` })
+    } else {
+      toast({ title: 'Nothing to add', description: 'All exercises from this template are already in today\'s workout' })
+    }
+  }
+
+  async function handleSaveAsTemplate() {
+    if (!templateName.trim() || workoutExercises.length === 0) return
+    setSavingTemplate(true)
+    try {
+      await createTemplate(
+        templateName.trim(),
+        workoutExercises.map((we) => ({ exerciseId: we.exercise.id, defaultSets: Math.max(1, we.sets.length) }))
+      )
+      setTemplates(null) // refetch next time the picker opens
+      setShowSaveTemplate(false)
+      setTemplateName('')
+      toast({ title: '✓ Template saved' })
+    } catch {
+      toast({ title: 'Error', description: 'Failed to save template', variant: 'destructive' })
+    }
+    setSavingTemplate(false)
   }
 
   function toggleMode(entryId: string, mode: ExerciseMode) {
@@ -412,15 +489,26 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
           </div>
         </div>
         {workoutExists && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="text-muted-foreground hover:text-destructive transition-colors"
-            onClick={() => setShowDeleteWorkout(true)}
-            title="Delete workout"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground hover:text-primary transition-colors"
+              onClick={() => setShowSaveTemplate(true)}
+              title="Save as template"
+            >
+              <BookmarkPlus className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground hover:text-destructive transition-colors"
+              onClick={() => setShowDeleteWorkout(true)}
+              title="Delete workout"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
         )}
       </div>
 
@@ -494,10 +582,16 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
           </div>
         </div>
       ) : (
-        <Button variant="outline" className="w-full border-dashed transition-colors" onClick={openSearch}>
-          <Plus className="h-4 w-4 mr-2" />
-          Add exercise
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" className="flex-1 border-dashed transition-colors" onClick={openSearch}>
+            <Plus className="h-4 w-4 mr-2" />
+            Add exercise
+          </Button>
+          <Button variant="outline" className="flex-1 border-dashed transition-colors" onClick={openTemplatePicker}>
+            <ClipboardList className="h-4 w-4 mr-2" />
+            Use template
+          </Button>
+        </div>
       )}
 
       {/* Empty state */}
@@ -576,6 +670,76 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
             <Button variant="outline" onClick={() => setShowDeleteWorkout(false)} disabled={deletingWorkout}>Cancel</Button>
             <Button variant="destructive" onClick={handleDeleteWorkout} disabled={deletingWorkout}>
               {deletingWorkout ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Deleting…</> : 'Delete workout'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Template picker */}
+      <Dialog open={showTemplatePicker} onOpenChange={setShowTemplatePicker}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Use template</DialogTitle>
+            <DialogDescription>
+              Adds the template's exercises with empty sets. Exercises already in today's workout are skipped.
+            </DialogDescription>
+          </DialogHeader>
+          {templates === null ? (
+            <div className="py-8 flex justify-center">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : templates.length === 0 ? (
+            <p className="py-6 text-sm text-muted-foreground text-center">
+              No templates yet. Create one in the Templates tab, or save this workout as a template.
+            </p>
+          ) : (
+            <div className="space-y-2 max-h-72 overflow-y-auto">
+              {templates.map((t) => (
+                <button
+                  key={t.id}
+                  disabled={!!applyingTemplateId}
+                  onClick={() => handleApplyTemplate(t)}
+                  className="w-full text-left bg-secondary/30 hover:bg-secondary/50 rounded-lg px-3 py-2.5 transition-colors disabled:opacity-50 flex items-center justify-between gap-2"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{t.name}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {t.template_exercises.map((te) => te.exercise.name).join(' · ')}
+                    </p>
+                  </div>
+                  {applyingTemplateId === t.id && (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground shrink-0" />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Save as template */}
+      <Dialog open={showSaveTemplate} onOpenChange={(o) => { setShowSaveTemplate(o); if (!o) setTemplateName('') }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Save as template</DialogTitle>
+            <DialogDescription>
+              Saves today's {workoutExercises.length} exercise{workoutExercises.length !== 1 ? 's' : ''} (and set counts) as a reusable template. Weights and reps are not saved.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label>Template name</Label>
+            <Input
+              autoFocus
+              placeholder="e.g. Push Day"
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveAsTemplate() }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSaveTemplate(false)} disabled={savingTemplate}>Cancel</Button>
+            <Button onClick={handleSaveAsTemplate} disabled={savingTemplate || !templateName.trim()}>
+              {savingTemplate ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving…</> : 'Save template'}
             </Button>
           </DialogFooter>
         </DialogContent>

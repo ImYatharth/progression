@@ -54,3 +54,22 @@ export interface ExerciseHistorySession {
   date: string
   sets: Set[]
 }
+
+export interface Template {
+  id: string
+  name: string
+  created_at: string
+}
+
+export interface TemplateExercise {
+  id: string
+  template_id: string
+  exercise_id: string
+  order_index: number
+  default_sets: number
+  exercise: Exercise
+}
+
+export interface TemplateWithExercises extends Template {
+  template_exercises: TemplateExercise[]
+}

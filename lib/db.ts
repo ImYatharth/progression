@@ -1,5 +1,8 @@
 import { createClient } from './supabase'
-import type { Exercise, Workout, WorkoutWithExercises, ExerciseHistorySession, MuscleGroup } from '@/types'
+import type {
+  Exercise, Workout, WorkoutWithExercises, ExerciseHistorySession, MuscleGroup,
+  TemplateWithExercises,
+} from '@/types'
 
 // ── Exercises ──────────────────────────────────────────────────────────────
 
@@ -297,4 +300,58 @@ export async function getExerciseHistory(exerciseId: string): Promise<ExerciseHi
   }
 
   return results.sort((a, b) => a.date.localeCompare(b.date))
+}
+
+// ── Templates ─────────────────────────────────────────────────────────────
+
+export async function getTemplates(): Promise<TemplateWithExercises[]> {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('templates')
+    .select(`
+      *,
+      template_exercises(
+        *,
+        exercise:exercises(*)
+      )
+    `)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data || []).map((t) => ({
+    ...t,
+    template_exercises: (t.template_exercises || []).sort(
+      (a: { order_index: number }, b: { order_index: number }) => a.order_index - b.order_index
+    ),
+  }))
+}
+
+export async function createTemplate(
+  name: string,
+  exercises: Array<{ exerciseId: string; defaultSets: number }>
+): Promise<void> {
+  const supabase = createClient()
+  const { data: template, error } = await supabase
+    .from('templates')
+    .insert({ name })
+    .select()
+    .single()
+  if (error) throw error
+
+  if (exercises.length > 0) {
+    const { error: teErr } = await supabase.from('template_exercises').insert(
+      exercises.map((ex, i) => ({
+        template_id: template.id,
+        exercise_id: ex.exerciseId,
+        order_index: i,
+        default_sets: ex.defaultSets,
+      }))
+    )
+    if (teErr) throw teErr
+  }
+}
+
+export async function deleteTemplate(id: string): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.from('templates').delete().eq('id', id)
+  if (error) throw error
 }

@@ -1,7 +1,7 @@
 "use client"
 
 import Link from 'next/link'
-import { Dumbbell, BookOpen, LayoutDashboard } from 'lucide-react'
+import { Dumbbell, BookOpen, LayoutDashboard, ClipboardList } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 export function Navbar() {
@@ -18,6 +18,12 @@ export function Navbar() {
             <Link href="/">
               <LayoutDashboard className="h-4 w-4 sm:mr-1.5" />
               <span className="hidden sm:inline">Dashboard</span>
+            </Link>
+          </Button>
+          <Button variant="ghost" size="sm" asChild>
+            <Link href="/templates">
+              <ClipboardList className="h-4 w-4 sm:mr-1.5" />
+              <span className="hidden sm:inline">Templates</span>
             </Link>
           </Button>
           <Button variant="ghost" size="sm" asChild>
