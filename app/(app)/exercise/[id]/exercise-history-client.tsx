@@ -3,13 +3,24 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { ChevronLeft, TrendingUp, Dumbbell } from 'lucide-react'
+import { ChevronLeft, TrendingUp, Dumbbell, Pencil, Loader2 } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import { Button } from '@/components/ui/button'
-import { getExerciseById, getExerciseHistory } from '@/lib/db'
-import type { Exercise, ExerciseHistorySession } from '@/types'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from '@/components/ui/dialog'
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select'
+import { useToast } from '@/components/ui/use-toast'
+import { getExerciseById, getExerciseHistory, updateExercise } from '@/lib/db'
+import type { Exercise, ExerciseHistorySession, MuscleGroup } from '@/types'
+
+const MUSCLE_GROUPS: MuscleGroup[] = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio']
 
 const MUSCLE_GROUP_COLORS: Record<string, string> = {
   Chest: 'bg-red-900/40 text-red-300 border-red-800',
@@ -27,9 +38,40 @@ interface ExerciseHistoryClientProps {
 
 export function ExerciseHistoryClient({ exerciseId }: ExerciseHistoryClientProps) {
   const router = useRouter()
+  const { toast } = useToast()
   const [exercise, setExercise] = useState<Exercise | null>(null)
   const [sessions, setSessions] = useState<ExerciseHistorySession[]>([])
   const [loading, setLoading] = useState(true)
+
+  const [showEdit, setShowEdit] = useState(false)
+  const [editName, setEditName] = useState('')
+  const [editGroup, setEditGroup] = useState<MuscleGroup>('Chest')
+  const [savingEdit, setSavingEdit] = useState(false)
+
+  function openEdit() {
+    if (!exercise) return
+    setEditName(exercise.name)
+    setEditGroup(exercise.muscle_group)
+    setShowEdit(true)
+  }
+
+  async function handleSaveEdit() {
+    if (!exercise || !editName.trim()) return
+    setSavingEdit(true)
+    try {
+      const updated = await updateExercise(exercise.id, editName.trim(), editGroup)
+      setExercise(updated)
+      setShowEdit(false)
+      toast({ title: '✓ Exercise updated' })
+    } catch {
+      toast({
+        title: 'Could not update',
+        description: 'An exercise with that name may already exist.',
+        variant: 'destructive',
+      })
+    }
+    setSavingEdit(false)
+  }
 
   useEffect(() => {
     async function load() {
@@ -107,6 +149,15 @@ export function ExerciseHistoryClient({ exerciseId }: ExerciseHistoryClientProps
             </div>
           </div>
         </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="ml-auto shrink-0 text-muted-foreground hover:text-primary transition-colors"
+          onClick={openEdit}
+          title="Edit exercise"
+        >
+          <Pencil className="h-4 w-4" />
+        </Button>
       </div>
 
       {sessions.length === 0 ? (
@@ -220,6 +271,41 @@ export function ExerciseHistoryClient({ exerciseId }: ExerciseHistoryClientProps
           </div>
         </>
       )}
+
+      {/* Edit exercise dialog */}
+      <Dialog open={showEdit} onOpenChange={setShowEdit}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Edit exercise</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>Exercise name</Label>
+              <Input
+                autoFocus
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEdit() }}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Muscle group</Label>
+              <Select value={editGroup} onValueChange={(v) => setEditGroup(v as MuscleGroup)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {MUSCLE_GROUPS.map((mg) => <SelectItem key={mg} value={mg}>{mg}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEdit(false)} disabled={savingEdit}>Cancel</Button>
+            <Button onClick={handleSaveEdit} disabled={savingEdit || !editName.trim()}>
+              {savingEdit ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving…</> : 'Save changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

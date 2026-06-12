@@ -28,6 +28,18 @@ export async function createCustomExercise(name: string, muscle_group: MuscleGro
   return data
 }
 
+export async function updateExercise(id: string, name: string, muscle_group: MuscleGroup): Promise<Exercise> {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('exercises')
+    .update({ name, muscle_group })
+    .eq('id', id)
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
 export async function getExerciseById(id: string): Promise<Exercise | null> {
   const supabase = createClient()
   const { data, error } = await supabase
