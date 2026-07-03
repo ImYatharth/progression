@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/components/ui/use-toast'
 import { createClient } from '@/lib/supabase'
-import { getExercises, createCustomExercise, getLastSessionForExercise, saveWorkout, deleteWorkout, getTemplates, createTemplate } from '@/lib/db'
+import { getExercises, createCustomExercise, getLastSessionForExercise, getLastSessionsForExercises, saveWorkout, deleteWorkout, getTemplates, createTemplate } from '@/lib/db'
 import type { Exercise, MuscleGroup, ExerciseHistorySession, TemplateWithExercises } from '@/types'
 
 const MUSCLE_GROUPS: MuscleGroup[] = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio']
@@ -191,39 +191,44 @@ export function WorkoutLogClient({ date }: WorkoutLogClientProps) {
           .order('order_index', { ascending: true })
 
         if (wes) {
-          const entries: WorkoutExerciseEntry[] = await Promise.all(
-            wes.map(async (we) => {
-              const rawSets: Array<{
-                set_number: number
-                reps: number | null
-                weight_kg: number | null
-                duration_seconds: number | null
-              }> = (we.sets || []).sort(
-                (a: { set_number: number }, b: { set_number: number }) => a.set_number - b.set_number
-              )
-
-              // Determine mode: if any set has duration_seconds, treat as time mode.
-              // Also default cardio to time mode.
-              const hasTimeSets = rawSets.some((s) => s.duration_seconds != null && s.duration_seconds > 0)
-              const mode: ExerciseMode =
-                we.exercise.muscle_group === 'Cardio' || hasTimeSets ? 'time' : 'reps'
-
-              const sortedSets: SetRow[] = rawSets.map((s) => ({
-                id: crypto.randomUUID(),
-                setNumber: s.set_number,
-                reps: s.reps?.toString() ?? '',
-                weightKg: s.weight_kg?.toString() ?? '',
-                // Convert seconds → minutes for display in time mode
-                durationMinutes:
-                  mode === 'time' && s.duration_seconds != null
-                    ? (s.duration_seconds / 60).toString()
-                    : '',
-              }))
-
-              const lastSession = await getLastSessionForExercise(we.exercise.id, date)
-              return { id: crypto.randomUUID(), exercise: we.exercise, sets: sortedSets, lastSession, mode }
-            })
+          // One batched query for every exercise's last session instead of
+          // one query per exercise.
+          const lastSessions = await getLastSessionsForExercises(
+            wes.map((we) => we.exercise.id),
+            date
           )
+
+          const entries: WorkoutExerciseEntry[] = wes.map((we) => {
+            const rawSets: Array<{
+              set_number: number
+              reps: number | null
+              weight_kg: number | null
+              duration_seconds: number | null
+            }> = (we.sets || []).sort(
+              (a: { set_number: number }, b: { set_number: number }) => a.set_number - b.set_number
+            )
+
+            // Determine mode: if any set has duration_seconds, treat as time mode.
+            // Also default cardio to time mode.
+            const hasTimeSets = rawSets.some((s) => s.duration_seconds != null && s.duration_seconds > 0)
+            const mode: ExerciseMode =
+              we.exercise.muscle_group === 'Cardio' || hasTimeSets ? 'time' : 'reps'
+
+            const sortedSets: SetRow[] = rawSets.map((s) => ({
+              id: crypto.randomUUID(),
+              setNumber: s.set_number,
+              reps: s.reps?.toString() ?? '',
+              weightKg: s.weight_kg?.toString() ?? '',
+              // Convert seconds → minutes for display in time mode
+              durationMinutes:
+                mode === 'time' && s.duration_seconds != null
+                  ? (s.duration_seconds / 60).toString()
+                  : '',
+            }))
+
+            const lastSession = lastSessions[we.exercise.id] ?? null
+            return { id: crypto.randomUUID(), exercise: we.exercise, sets: sortedSets, lastSession, mode }
+          })
           setWorkoutExercises(entries)
         }
       }

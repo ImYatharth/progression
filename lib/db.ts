@@ -247,84 +247,90 @@ function hasLoggedData(sets: Array<{ reps: number | null; weight_kg: number | nu
   return sets.some((s) => s.reps != null || s.weight_kg != null || s.duration_seconds != null)
 }
 
+// Fetch every logged session of an exercise in ONE round-trip, with each
+// session's workout date and sets embedded. Replaces the old per-workout
+// N+1 loops. Returns sessions with real logged data, newest-first.
+async function fetchExerciseSessions(exerciseId: string): Promise<ExerciseHistorySession[]> {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('workout_exercises')
+    .select(`
+      workout:workouts!inner(id, date),
+      sets(*)
+    `)
+    .eq('exercise_id', exerciseId)
+  if (error) throw error
+  if (!data) return []
+
+  const sessions: ExerciseHistorySession[] = []
+  for (const row of data) {
+    const workout = (row.workout as unknown) as { id: string; date: string } | null
+    const sets = (row.sets || []) as ExerciseHistorySession['sets']
+    if (!workout || !hasLoggedData(sets)) continue
+    sessions.push({
+      workout_id: workout.id,
+      date: workout.date,
+      sets: [...sets].sort((a, b) => a.set_number - b.set_number),
+    })
+  }
+  return sessions.sort((a, b) => b.date.localeCompare(a.date))
+}
+
 export async function getLastSessionForExercise(
   exerciseId: string,
   beforeDate: string
 ): Promise<ExerciseHistorySession | null> {
+  const sessions = await fetchExerciseSessions(exerciseId)
+  return sessions.find((s) => s.date < beforeDate) ?? null
+}
+
+// Batched version of getLastSessionForExercise: one query for many
+// exercises at once. Used on workout-log load so a session with N
+// exercises does 1 round-trip instead of N.
+export async function getLastSessionsForExercises(
+  exerciseIds: string[],
+  beforeDate: string
+): Promise<Record<string, ExerciseHistorySession | null>> {
+  const result: Record<string, ExerciseHistorySession | null> = {}
+  if (exerciseIds.length === 0) return result
+
   const supabase = createClient()
+  const { data, error } = await supabase
+    .from('workout_exercises')
+    .select(`
+      exercise_id,
+      workout:workouts!inner(id, date),
+      sets(*)
+    `)
+    .in('exercise_id', exerciseIds)
+  if (error) throw error
 
-  const { data: workouts, error: wErr } = await supabase
-    .from('workouts')
-    .select('id, date')
-    .lt('date', beforeDate)
-    .order('date', { ascending: false })
-  if (wErr) throw wErr
-  if (!workouts || workouts.length === 0) return null
-
-  for (const workout of workouts) {
-    const { data: we } = await supabase
-      .from('workout_exercises')
-      .select('id')
-      .eq('workout_id', workout.id)
-      .eq('exercise_id', exerciseId)
-      .maybeSingle()
-
-    if (we) {
-      const { data: sets } = await supabase
-        .from('sets')
-        .select('*')
-        .eq('workout_exercise_id', we.id)
-        .order('set_number', { ascending: true })
-
-      // Skip sessions where the exercise was added but no data was logged.
-      if (!sets || !hasLoggedData(sets)) continue
-
-      return {
-        workout_id: workout.id,
-        date: workout.date,
-        sets,
-      }
+  const byExercise: Record<string, ExerciseHistorySession[]> = {}
+  for (const row of data || []) {
+    const workout = (row.workout as unknown) as { id: string; date: string } | null
+    const sets = (row.sets || []) as ExerciseHistorySession['sets']
+    if (!workout || workout.date >= beforeDate || !hasLoggedData(sets)) continue
+    const session: ExerciseHistorySession = {
+      workout_id: workout.id,
+      date: workout.date,
+      sets: [...sets].sort((a, b) => a.set_number - b.set_number),
     }
+    ;(byExercise[row.exercise_id] ||= []).push(session)
   }
-  return null
+
+  for (const id of exerciseIds) {
+    const list = byExercise[id]
+    if (!list || list.length === 0) { result[id] = null; continue }
+    list.sort((a, b) => b.date.localeCompare(a.date))
+    result[id] = list[0]
+  }
+  return result
 }
 
 export async function getExerciseHistory(exerciseId: string): Promise<ExerciseHistorySession[]> {
-  const supabase = createClient()
-
-  const { data: wes, error } = await supabase
-    .from('workout_exercises')
-    .select(`
-      id,
-      workout:workouts(id, date)
-    `)
-    .eq('exercise_id', exerciseId)
-  if (error) throw error
-  if (!wes || wes.length === 0) return []
-
-  const results: ExerciseHistorySession[] = []
-
-  for (const we of wes) {
-    const workout = (we.workout as unknown) as { id: string; date: string } | null
-    if (!workout) continue
-
-    const { data: sets } = await supabase
-      .from('sets')
-      .select('*')
-      .eq('workout_exercise_id', we.id)
-      .order('set_number', { ascending: true })
-
-    // Only include sessions where actual data was logged.
-    if (!sets || !hasLoggedData(sets)) continue
-
-    results.push({
-      workout_id: workout.id,
-      date: workout.date,
-      sets,
-    })
-  }
-
-  return results.sort((a, b) => a.date.localeCompare(b.date))
+  // Chart/list want oldest-first
+  const sessions = await fetchExerciseSessions(exerciseId)
+  return sessions.reverse()
 }
 
 // ── Templates ─────────────────────────────────────────────────────────────
