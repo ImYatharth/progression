@@ -240,6 +240,13 @@ export async function deleteWorkout(date: string): Promise<void> {
 
 // ── Exercise History ──────────────────────────────────────────────────────
 
+// A set only counts as real logged data if at least one value was entered.
+// Rows the user added but left blank (all-null) are ignored so empty
+// sessions don't clutter "last session" / history views.
+function hasLoggedData(sets: Array<{ reps: number | null; weight_kg: number | null; duration_seconds: number | null }>): boolean {
+  return sets.some((s) => s.reps != null || s.weight_kg != null || s.duration_seconds != null)
+}
+
 export async function getLastSessionForExercise(
   exerciseId: string,
   beforeDate: string
@@ -269,10 +276,13 @@ export async function getLastSessionForExercise(
         .eq('workout_exercise_id', we.id)
         .order('set_number', { ascending: true })
 
+      // Skip sessions where the exercise was added but no data was logged.
+      if (!sets || !hasLoggedData(sets)) continue
+
       return {
         workout_id: workout.id,
         date: workout.date,
-        sets: sets || [],
+        sets,
       }
     }
   }
@@ -304,10 +314,13 @@ export async function getExerciseHistory(exerciseId: string): Promise<ExerciseHi
       .eq('workout_exercise_id', we.id)
       .order('set_number', { ascending: true })
 
+    // Only include sessions where actual data was logged.
+    if (!sets || !hasLoggedData(sets)) continue
+
     results.push({
       workout_id: workout.id,
       date: workout.date,
-      sets: sets || [],
+      sets,
     })
   }
 
@@ -359,6 +372,39 @@ export async function createTemplate(
       }))
     )
     if (teErr) throw teErr
+  }
+}
+
+export async function updateTemplate(
+  id: string,
+  name: string,
+  exercises: Array<{ exerciseId: string; defaultSets: number }>
+): Promise<void> {
+  const supabase = createClient()
+
+  const { error: nameErr } = await supabase
+    .from('templates')
+    .update({ name })
+    .eq('id', id)
+  if (nameErr) throw nameErr
+
+  // Replace the exercise set: delete existing rows, insert the new list.
+  const { error: delErr } = await supabase
+    .from('template_exercises')
+    .delete()
+    .eq('template_id', id)
+  if (delErr) throw delErr
+
+  if (exercises.length > 0) {
+    const { error: insErr } = await supabase.from('template_exercises').insert(
+      exercises.map((ex, i) => ({
+        template_id: id,
+        exercise_id: ex.exerciseId,
+        order_index: i,
+        default_sets: ex.defaultSets,
+      }))
+    )
+    if (insErr) throw insErr
   }
 }
 

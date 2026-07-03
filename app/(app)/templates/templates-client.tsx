@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, Loader2, Minus, ClipboardList } from 'lucide-react'
+import { Plus, Trash2, Loader2, Minus, ClipboardList, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -9,7 +9,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
-import { getTemplates, createTemplate, deleteTemplate, getExercises } from '@/lib/db'
+import { getTemplates, createTemplate, updateTemplate, deleteTemplate, getExercises } from '@/lib/db'
 import type { Exercise, MuscleGroup, TemplateWithExercises } from '@/types'
 
 const MUSCLE_GROUPS: MuscleGroup[] = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio']
@@ -35,8 +35,9 @@ export function TemplatesClient() {
   const [exercises, setExercises] = useState<Exercise[]>([])
   const [loading, setLoading] = useState(true)
 
-  // Builder state
+  // Builder state — doubles as the editor. editingId null = creating new.
   const [building, setBuilding] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [draftName, setDraftName] = useState('')
   const [draftExercises, setDraftExercises] = useState<DraftExercise[]>([])
   const [showPicker, setShowPicker] = useState(false)
@@ -76,10 +77,32 @@ export function TemplatesClient() {
 
   function resetBuilder() {
     setBuilding(false)
+    setEditingId(null)
     setDraftName('')
     setDraftExercises([])
     setShowPicker(false)
     setSearchQuery('')
+  }
+
+  function startCreate() {
+    setEditingId(null)
+    setDraftName('')
+    setDraftExercises([])
+    setShowPicker(false)
+    setSearchQuery('')
+    setBuilding(true)
+  }
+
+  function startEdit(template: TemplateWithExercises) {
+    setEditingId(template.id)
+    setDraftName(template.name)
+    setDraftExercises(
+      template.template_exercises.map((te) => ({ exercise: te.exercise, defaultSets: te.default_sets }))
+    )
+    setShowPicker(false)
+    setSearchQuery('')
+    setBuilding(true)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   function adjustSets(exerciseId: string, delta: number) {
@@ -96,14 +119,17 @@ export function TemplatesClient() {
     if (!draftName.trim() || draftExercises.length === 0) return
     setSavingDraft(true)
     try {
-      await createTemplate(
-        draftName.trim(),
-        draftExercises.map((d) => ({ exerciseId: d.exercise.id, defaultSets: d.defaultSets }))
-      )
+      const exercisePayload = draftExercises.map((d) => ({ exerciseId: d.exercise.id, defaultSets: d.defaultSets }))
+      if (editingId) {
+        await updateTemplate(editingId, draftName.trim(), exercisePayload)
+      } else {
+        await createTemplate(draftName.trim(), exercisePayload)
+      }
       const tps = await getTemplates()
       setTemplates(tps)
+      const wasEditing = !!editingId
       resetBuilder()
-      toast({ title: '✓ Template saved' })
+      toast({ title: wasEditing ? '✓ Template updated' : '✓ Template saved' })
     } catch {
       toast({ title: 'Error', description: 'Failed to save template', variant: 'destructive' })
     }
@@ -143,16 +169,17 @@ export function TemplatesClient() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Templates</h1>
         {!building && (
-          <Button size="sm" onClick={() => setBuilding(true)}>
+          <Button size="sm" onClick={startCreate}>
             <Plus className="h-4 w-4 mr-1.5" />
             New template
           </Button>
         )}
       </div>
 
-      {/* Builder */}
+      {/* Builder / editor */}
       {building && (
         <div className="bg-card border border-border rounded-xl p-4 space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <p className="text-sm font-semibold">{editingId ? 'Edit template' : 'New template'}</p>
           <div className="space-y-1.5">
             <Label>Template name</Label>
             <Input
@@ -255,7 +282,9 @@ export function TemplatesClient() {
               onClick={handleSaveTemplate}
               disabled={savingDraft || !draftName.trim() || draftExercises.length === 0}
             >
-              {savingDraft ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving…</> : 'Save template'}
+              {savingDraft
+                ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving…</>
+                : editingId ? 'Save changes' : 'Save template'}
             </Button>
           </div>
         </div>
@@ -274,23 +303,33 @@ export function TemplatesClient() {
         </div>
       )}
 
-      {/* Template list */}
-      {templates.map((t, idx) => (
+      {/* Template list (the one being edited is hidden — it lives in the editor above) */}
+      {templates.filter((t) => t.id !== editingId).map((t, idx) => (
         <div
           key={t.id}
           className="bg-card border border-border rounded-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200"
           style={{ animationDelay: `${idx * 40}ms` }}
         >
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-            <h2 className="font-semibold text-sm">{t.name}</h2>
-            <div className="flex items-center gap-2 shrink-0 ml-2">
-              <span className="text-xs text-muted-foreground">
+            <h2 className="font-semibold text-sm min-w-0 truncate">{t.name}</h2>
+            <div className="flex items-center gap-1 shrink-0 ml-2">
+              <span className="text-xs text-muted-foreground mr-1">
                 {t.template_exercises.length} exercise{t.template_exercises.length !== 1 ? 's' : ''}
               </span>
               <Button
                 variant="ghost" size="icon"
+                className="h-8 w-8 text-muted-foreground hover:text-primary transition-colors"
+                onClick={() => startEdit(t)}
+                disabled={building}
+                title="Edit template"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost" size="icon"
                 className="h-8 w-8 text-muted-foreground hover:text-destructive transition-colors"
                 onClick={() => setConfirmDeleteId(t.id)}
+                title="Delete template"
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
